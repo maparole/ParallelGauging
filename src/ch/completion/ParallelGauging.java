@@ -5,8 +5,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -16,16 +18,29 @@ public class ParallelGauging {
 
 	private static final int maxCallsInterval = 100;
 
-	private static final double quotient = 2;
+	private static final int servicePoolSize = 200;
 
-	private static final int serverConnectionPoolSize = 200;
+	private static final int serviceMinimumResponseTime = 50;
 
-	static CustomPool.Config oneConfig = new CustomPool.Config(1000);
-	static CustomPool.Config twoConfig = new CustomPool.Config(1000);
+	private static final double serviceResponseTimeVariationForCurrentLoadQuotient = 2;
 
-	static Server server = new Server();
+	static CustomPool.Config firstLevelConfig = new CustomPool.Config(1000, "FIRST");
+	static CustomPool.Config secondLevelConfig = new CustomPool.Config(1000, "SECOND");
+
+	static Service service = new Service();
 
 	public static void main(String[] args) {
+
+		System.out.println();
+		System.out.println("average nbCalls/s: " + (1000.0 / maxCallsInterval));
+		System.out.println();
+		System.out.println("servicePoolSize: " + servicePoolSize);
+		System.out.println("serviceMinimumResponseTime: " + serviceMinimumResponseTime);
+		System.out.println("serviceResponseTimeVariationForCurrentLoadQuotient: " + serviceResponseTimeVariationForCurrentLoadQuotient);
+		System.out.println();
+		System.out.println(secondLevelConfig.taskName + " level's maxNbThreads: " + secondLevelConfig.maxNbThreads);
+		System.out.println(firstLevelConfig.taskName + " level's maxNbThreads: " + firstLevelConfig.maxNbThreads);
+		System.out.println();
 
 		while (true) {
 			try {
@@ -34,50 +49,50 @@ public class ParallelGauging {
 				e.printStackTrace();
 			}
 			new Thread(() -> {
-				twoLevels();
+				firstLevels();
 			}).start();
 		}
 	}
 
-	static List<Integer> oneLevel() {
+	static List<Integer> secondLevel() {
 
 		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random() * 4) * 3)).boxed()
 				.collect(Collectors.toList());
 
 		///
-		CustomPool pool = new CustomPool(testList.size(), oneConfig);
+		CustomPool pool = new CustomPool(testList.size(), secondLevelConfig);
 
-		List<Integer> result = pool.getPool().submit(() -> testList.parallelStream().map(item -> {
-			return server.doThis(itemy -> itemy * 10, item);
+		List<Integer> result = pool.submit(() -> testList.parallelStream().map(item -> {
+			return service.doThis(itemy -> itemy * 10, item);
 		}).collect(Collectors.toList())).join();
 
 		///
-		pool.shutdown("ONE SIZE : ");
+		pool.shutdown();
 
 		return result;
 	}
 
-	static List<Integer> twoLevels() {
+	static List<Integer> firstLevels() {
 
-		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random()* 4) * 3)).boxed()
+		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random() * 4) * 3)).boxed()
 				.collect(Collectors.toList());
 
 		///
-		CustomPool pool = new CustomPool(testList.size(), twoConfig);
+		CustomPool pool = new CustomPool(testList.size(), firstLevelConfig);
 
-		List<Integer> result = pool.getPool().submit(() -> testList.parallelStream().map(item -> {
-			return oneLevel().stream().reduce(Integer::sum).get();
+		List<Integer> result = pool.submit(() -> testList.parallelStream().map(item -> {
+			return secondLevel().stream().reduce(Integer::sum).get();
 		}).collect(Collectors.toList())).join();
 
 		///
-		pool.shutdown(">>> TWO SIZE : ");
+		pool.shutdown();
 
 		return result;
 	}
 
-	static class Server {
+	static class Service {
 
-		static final int connectionPoolSize = serverConnectionPoolSize;
+		static final int connectionPoolSize = servicePoolSize;
 
 		final AtomicLong nbCurrent = new AtomicLong(0);
 
@@ -91,11 +106,11 @@ public class ParallelGauging {
 			}
 			nbCurrent.incrementAndGet();
 
-			int sleepTime = 50 + (int) (Math.random() * 30) + (int) (nbCurrent.doubleValue() / quotient) ;
+			int sleepTime = serviceMinimumResponseTime + (int) (Math.random() * 30)
+					+ (int) (nbCurrent.doubleValue() / serviceResponseTimeVariationForCurrentLoadQuotient);
 			try {
 				Thread.sleep(sleepTime);
-				// System.out.println(sleepTime + "\ttask\t" + input.toString() + "\t" +
-				// Thread.currentThread().getId());
+				// System.out.println(sleepTime + "\ttask\t" + input.toString() + "\t" + Thread.currentThread().getId());
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
@@ -116,17 +131,25 @@ public class ParallelGauging {
 
 		public static class Config {
 
-			private static int tempo = 50;
+			private static final int tempo = 50;
+
+			private static final double margin = 1.2;
+
+			private static final int maxLastResponseTime = 3000;
 
 			private int parallelism = 10;
 			private int maxNeededParallelism = 1;
 
+			private long lastResponseTime = 0;
+
 			private final int maxNbThreads;
+			private final String taskName;
 			private final AtomicLong currentNbThreads = new AtomicLong(0);
 			private final Map<Integer, List<Long>> parallelismToResponseTimes = new ConcurrentHashMap<>();
 
-			public Config(int maxNbThreads) {
+			public Config(int maxNbThreads, String taskName) {
 				this.maxNbThreads = maxNbThreads;
+				this.taskName = taskName;
 				this.resetMap();
 			}
 
@@ -138,7 +161,7 @@ public class ParallelGauging {
 					parallelismToResponseTimes.put(parallelism - STEP, new ArrayList<>());
 			}
 
-			synchronized void processMap(Long time, String msg) {
+			synchronized void processMap(Long time) {
 				List<Long> list = parallelismToResponseTimes.get(parallelism);
 				if (list == null)
 					return;
@@ -149,16 +172,14 @@ public class ParallelGauging {
 					if (optionalUntestedParallelism.isPresent()) {
 						parallelism = optionalUntestedParallelism.get();
 					} else {
-						Map<Integer, Double> parallelismToAverageResponseTime = parallelismToResponseTimes.entrySet()
-								.stream().collect(Collectors.toMap(Map.Entry::getKey,
-										e -> e.getValue().stream().mapToDouble(a -> a).average().getAsDouble()));
+						Map<Integer, Double> parallelismToAverageResponseTime = parallelismToResponseTimes.entrySet().stream().collect(
+								Collectors.toMap(Map.Entry::getKey, e -> e.getValue().stream().mapToDouble(a -> a).average().getAsDouble()));
 						parallelismToAverageResponseTime.entrySet().forEach(entry -> {
 							System.out.println(entry.getKey() + " -> " + entry.getValue());
 						});
-						int previousParallelism = (int) parallelismToResponseTimes.keySet().stream().mapToDouble(q -> q)
-								.average().getAsDouble();
-						Entry<Integer, Double> bestParallelismEntry = parallelismToAverageResponseTime.entrySet()
-								.stream().min((d1, d2) -> Double.compare(d1.getValue(), d2.getValue())).get();
+						int previousParallelism = (int) parallelismToResponseTimes.keySet().stream().mapToDouble(q -> q).average().getAsDouble();
+						Entry<Integer, Double> bestParallelismEntry = parallelismToAverageResponseTime.entrySet().stream()
+								.min((d1, d2) -> Double.compare(d1.getValue(), d2.getValue())).get();
 						int bestParallelism = bestParallelismEntry.getKey();
 						bestParallelism = previousParallelism + (bestParallelism - previousParallelism)
 								* Math.max(1, (int) ((double) parallelismToAverageResponseTime.get(previousParallelism)
@@ -167,7 +188,7 @@ public class ParallelGauging {
 						bestParallelism = Math.max(1, bestParallelism);
 						parallelism = bestParallelism;
 						resetMap();
-						System.out.println(msg + "\t(//)" + parallelism + "\t(nb)" + currentNbThreads + "\t(ms)"
+						System.out.println(taskName + "\t(//)" + parallelism + "\t(nb)" + currentNbThreads + "\t(ms)"
 								+ bestParallelismEntry.getValue() + "\n");
 					}
 				}
@@ -180,6 +201,8 @@ public class ParallelGauging {
 			}
 
 			int calculateSize(int neededSize) {
+				if (currentNbThreads.get() > margin * maxNbThreads && lastResponseTime > maxLastResponseTime)
+					throw new RuntimeException(taskName + "\t(//)" + "Too many requests");
 				maxNeededParallelism = Math.max(neededSize, maxNeededParallelism);
 				long currentNb = currentNbThreads.get();
 				int size;
@@ -200,9 +223,10 @@ public class ParallelGauging {
 				return size;
 			}
 
-			void processMetrics(long time, long size, String msg) {
+			void processMetrics(long time, long size) {
+				lastResponseTime = time;
 				currentNbThreads.addAndGet(-size);
-				processMap(time, msg);
+				processMap(time);
 				// System.out.println("time " + time);
 			}
 		}
@@ -214,13 +238,13 @@ public class ParallelGauging {
 			this.start = System.currentTimeMillis();
 		}
 
-		public ForkJoinPool getPool() {
-			return pool;
+		public <I, O> ForkJoinTask<O> submit(Callable<O> task) {
+			return pool.submit(task);
 		}
 
-		public void shutdown(String msg) {
+		public void shutdown() {
 			Long time = System.currentTimeMillis() - start;
-			config.processMetrics(time, size, msg);
+			config.processMetrics(time, size);
 			pool.shutdown();
 		}
 	}
