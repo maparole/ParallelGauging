@@ -14,15 +14,13 @@ import java.util.stream.IntStream;
 
 public class ParallelGauging {
 
-	private static final int maxCallsInterval = 200;
+	private static final int maxCallsInterval = 100;
 
-	private static final double quotient = 50;
+	private static final double quotient = 2;
 
-	private static final int serverConnectionPoolSize = 1000;
+	private static final int serverConnectionPoolSize = 200;
 
-	private static final int STEP = 1;
-
-	static CustomPool.Config oneConfig = new CustomPool.Config(5000);
+	static CustomPool.Config oneConfig = new CustomPool.Config(1000);
 	static CustomPool.Config twoConfig = new CustomPool.Config(1000);
 
 	static Server server = new Server();
@@ -41,7 +39,75 @@ public class ParallelGauging {
 		}
 	}
 
+	static List<Integer> oneLevel() {
+
+		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random() * 4) * 3)).boxed()
+				.collect(Collectors.toList());
+
+		///
+		CustomPool pool = new CustomPool(testList.size(), oneConfig);
+
+		List<Integer> result = pool.getPool().submit(() -> testList.parallelStream().map(item -> {
+			return server.doThis(itemy -> itemy * 10, item);
+		}).collect(Collectors.toList())).join();
+
+		///
+		pool.shutdown("ONE SIZE : ");
+
+		return result;
+	}
+
+	static List<Integer> twoLevels() {
+
+		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random()* 4) * 3)).boxed()
+				.collect(Collectors.toList());
+
+		///
+		CustomPool pool = new CustomPool(testList.size(), twoConfig);
+
+		List<Integer> result = pool.getPool().submit(() -> testList.parallelStream().map(item -> {
+			return oneLevel().stream().reduce(Integer::sum).get();
+		}).collect(Collectors.toList())).join();
+
+		///
+		pool.shutdown(">>> TWO SIZE : ");
+
+		return result;
+	}
+
+	static class Server {
+
+		static final int connectionPoolSize = serverConnectionPoolSize;
+
+		final AtomicLong nbCurrent = new AtomicLong(0);
+
+		<I, O> O doThis(Function<I, O> func, I input) {
+			while (nbCurrent.get() >= connectionPoolSize) {
+				try {
+					Thread.sleep(2);
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
+			nbCurrent.incrementAndGet();
+
+			int sleepTime = 50 + (int) (Math.random() * 30) + (int) (nbCurrent.doubleValue() / quotient) ;
+			try {
+				Thread.sleep(sleepTime);
+				// System.out.println(sleepTime + "\ttask\t" + input.toString() + "\t" +
+				// Thread.currentThread().getId());
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+
+			nbCurrent.decrementAndGet();
+			return func.apply(input);
+		}
+	}
+
 	public static class CustomPool {
+
+		private static final int STEP = 1;
 
 		private final CustomPool.Config config;
 		private final ForkJoinPool pool;
@@ -50,7 +116,7 @@ public class ParallelGauging {
 
 		public static class Config {
 
-			private static int tempo = 20;
+			private static int tempo = 50;
 
 			private int parallelism = 10;
 			private int maxNeededParallelism = 1;
@@ -156,72 +222,6 @@ public class ParallelGauging {
 			Long time = System.currentTimeMillis() - start;
 			config.processMetrics(time, size, msg);
 			pool.shutdown();
-		}
-	}
-
-	static List<Integer> oneLevel() {
-
-		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * 5) * 3)).boxed()
-				.collect(Collectors.toList());
-
-		///
-		CustomPool pool = new CustomPool(testList.size(), oneConfig);
-
-		List<Integer> result = pool.getPool().submit(() -> testList.parallelStream().map(item -> {
-			return server.doThis(itemy -> itemy * 10, item);
-		}).collect(Collectors.toList())).join();
-
-		///
-		pool.shutdown("ONE SIZE : ");
-
-		return result;
-	}
-
-	static List<Integer> twoLevels() {
-
-		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * 5) * 3)).boxed()
-				.collect(Collectors.toList());
-
-		///
-		CustomPool pool = new CustomPool(testList.size(), twoConfig);
-
-		List<Integer> result = pool.getPool().submit(() -> testList.parallelStream().map(item -> {
-			return oneLevel().stream().reduce(Integer::sum).get();
-		}).collect(Collectors.toList())).join();
-
-		///
-		pool.shutdown(">>> TWO SIZE : ");
-
-		return result;
-	}
-
-	static class Server {
-
-		static final int connectionPoolSize = serverConnectionPoolSize;
-
-		final AtomicLong nbCurrent = new AtomicLong(0);
-
-		<I, O> O doThis(Function<I, O> func, I input) {
-			while (nbCurrent.get() >= connectionPoolSize) {
-				try {
-					Thread.sleep(2);
-				} catch (InterruptedException e) {
-					e.printStackTrace();
-				}
-			}
-			nbCurrent.incrementAndGet();
-
-			int sleepTime = 15 + (int) (nbCurrent.doubleValue() / quotient) + (int) (Math.random() * 30);
-			try {
-				Thread.sleep(sleepTime);
-				// System.out.println(sleepTime + "\ttask\t" + input.toString() + "\t" +
-				// Thread.currentThread().getId());
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-
-			nbCurrent.decrementAndGet();
-			return func.apply(input);
 		}
 	}
 }
