@@ -19,12 +19,10 @@ public class ParallelGauging {
 	private static final double quotient = 50;
 
 	private static final int serverConnectionPoolSize = 1000;
-	
-	
-	private static final int STEP = 1;
-	
 
-	static CustomPool.Config oneConfig = new CustomPool.Config(20000);
+	private static final int STEP = 1;
+
+	static CustomPool.Config oneConfig = new CustomPool.Config(5000);
 	static CustomPool.Config twoConfig = new CustomPool.Config(1000);
 
 	static Server server = new Server();
@@ -85,14 +83,16 @@ public class ParallelGauging {
 					if (optionalUntestedParallelism.isPresent()) {
 						parallelism = optionalUntestedParallelism.get();
 					} else {
-						Map<Integer, Double> parallelismToAverageResponseTime = parallelismToResponseTimes.entrySet().stream().collect(
-								Collectors.toMap(Map.Entry::getKey, e -> e.getValue().stream().mapToDouble(a -> a).average().getAsDouble()));
+						Map<Integer, Double> parallelismToAverageResponseTime = parallelismToResponseTimes.entrySet()
+								.stream().collect(Collectors.toMap(Map.Entry::getKey,
+										e -> e.getValue().stream().mapToDouble(a -> a).average().getAsDouble()));
 						parallelismToAverageResponseTime.entrySet().forEach(entry -> {
 							System.out.println(entry.getKey() + " -> " + entry.getValue());
 						});
-						int previousParallelism = (int) parallelismToResponseTimes.keySet().stream().mapToDouble(q -> q).average().getAsDouble();
-						Entry<Integer, Double> bestParallelismEntry = parallelismToAverageResponseTime.entrySet().stream()
-								.min((d1, d2) -> Double.compare(d1.getValue(), d2.getValue())).get();
+						int previousParallelism = (int) parallelismToResponseTimes.keySet().stream().mapToDouble(q -> q)
+								.average().getAsDouble();
+						Entry<Integer, Double> bestParallelismEntry = parallelismToAverageResponseTime.entrySet()
+								.stream().min((d1, d2) -> Double.compare(d1.getValue(), d2.getValue())).get();
 						int bestParallelism = bestParallelismEntry.getKey();
 						bestParallelism = previousParallelism + (bestParallelism - previousParallelism)
 								* Math.max(1, (int) ((double) parallelismToAverageResponseTime.get(previousParallelism)
@@ -101,8 +101,8 @@ public class ParallelGauging {
 						bestParallelism = Math.max(1, bestParallelism);
 						parallelism = bestParallelism;
 						resetMap();
-						System.out.println(
-								msg + "\t(//)" + parallelism + "\t(nb)" + currentNbThreads + "\t(ms)" + bestParallelismEntry.getValue() + "\n");
+						System.out.println(msg + "\t(//)" + parallelism + "\t(nb)" + currentNbThreads + "\t(ms)"
+								+ bestParallelismEntry.getValue() + "\n");
 					}
 				}
 			}
@@ -115,16 +115,18 @@ public class ParallelGauging {
 
 			int calculateSize(int neededSize) {
 				maxNeededParallelism = Math.max(neededSize, maxNeededParallelism);
+				long currentNb = currentNbThreads.get();
 				int size;
-				if ((neededSize / parallelism) > 2 && neededSize * 2 + currentNbThreads.get() < maxNbThreads) {
+				if ((neededSize / parallelism) > 2 && neededSize * 2 + currentNb < maxNbThreads) {
 					size = neededSize;
-				} else if ((neededSize / parallelism) > 2 && neededSize + currentNbThreads.get() < maxNbThreads) {
+				} else if ((neededSize / parallelism) > 2 && neededSize + currentNb < maxNbThreads) {
 					size = neededSize / 2;
 				} else {
-					if (currentNbThreads.get() > maxNbThreads) {
+					if (currentNb > maxNbThreads) {
 						emergencyLowerParallelism();
 					}
 					size = Math.min(parallelism, maxNeededParallelism);
+					size = Math.min((int) ((double) (maxNbThreads - currentNb) / 2), size);
 				}
 				size = Math.min(neededSize, size);
 				size = Math.max(1, size);
@@ -159,7 +161,8 @@ public class ParallelGauging {
 
 	static List<Integer> oneLevel() {
 
-		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * 5) * 3)).boxed().collect(Collectors.toList());
+		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * 5) * 3)).boxed()
+				.collect(Collectors.toList());
 
 		///
 		CustomPool pool = new CustomPool(testList.size(), oneConfig);
@@ -176,7 +179,8 @@ public class ParallelGauging {
 
 	static List<Integer> twoLevels() {
 
-		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * 5) * 3)).boxed().collect(Collectors.toList());
+		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * 5) * 3)).boxed()
+				.collect(Collectors.toList());
 
 		///
 		CustomPool pool = new CustomPool(testList.size(), twoConfig);
@@ -193,12 +197,12 @@ public class ParallelGauging {
 
 	static class Server {
 
-		// serverConnectionPoolSize
+		static final int connectionPoolSize = serverConnectionPoolSize;
 
-		AtomicLong nbCurrent = new AtomicLong(0);
+		final AtomicLong nbCurrent = new AtomicLong(0);
 
 		<I, O> O doThis(Function<I, O> func, I input) {
-			while (nbCurrent.get() > serverConnectionPoolSize) {
+			while (nbCurrent.get() >= connectionPoolSize) {
 				try {
 					Thread.sleep(2);
 				} catch (InterruptedException e) {
@@ -206,13 +210,16 @@ public class ParallelGauging {
 				}
 			}
 			nbCurrent.incrementAndGet();
+
 			int sleepTime = 15 + (int) (nbCurrent.doubleValue() / quotient) + (int) (Math.random() * 30);
 			try {
 				Thread.sleep(sleepTime);
-				// System.out.println(sleepTime + "\ttask\t" + input.toString() + "\t" + Thread.currentThread().getId());
+				// System.out.println(sleepTime + "\ttask\t" + input.toString() + "\t" +
+				// Thread.currentThread().getId());
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
+
 			nbCurrent.decrementAndGet();
 			return func.apply(input);
 		}
