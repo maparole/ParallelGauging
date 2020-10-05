@@ -41,17 +41,6 @@ public class OptimizedTaskPool {
 		public static final int OPTIMISATION_TEMPO = 50;
 
 		/**
-		 * The acceptable {@link #maxNbThreads} max nb-of-threads margin-coefficient before {@link RunTimeException} if {@link #MAX_EXECUTION_TIME}
-		 * exceeded.
-		 */
-		public static final double MAX_NB_THEADS_MARGIN = 1.2;
-
-		/**
-		 * The {@link ForkJoinPool}s' acceptable max last-execution-time before {@link RunTimeException} if acceptable {@link #maxNbThreads} exceeded.
-		 */
-		public static final int MAX_EXECUTION_TIME = 3000;
-
-		/**
 		 * The step between the current default parallelism level and the other optimization test option(s).
 		 */
 		private static final int OPTIMIZATION_STEP = 1;
@@ -60,6 +49,16 @@ public class OptimizedTaskPool {
 		 * The max nb-of-threads to respect on a given task = sum of all thread pools' sizes on that task.
 		 */
 		private final int maxNbThreads;
+
+		/**
+		 * The acceptable {@link #maxNbThreads} max nb-of-threads margin-coefficient before {@link RunTimeException} if {@link #maxExecutionTime} exceeded.
+		 */
+		public final double maxNbThreadsMargin; // TODO properties
+
+		/**
+		 * The {@link ForkJoinPool}s' acceptable max last-execution-time before {@link RunTimeException} if acceptable {@link #maxNbThreads} exceeded.
+		 */
+		public final int maxExecutionTime; // TODO properties
 
 		/**
 		 * The task name for logging purposes.
@@ -78,6 +77,8 @@ public class OptimizedTaskPool {
 		public Config(int maxNbThreads, String taskName) {
 			this.maxNbThreads = maxNbThreads;
 			this.taskName = taskName;
+			this.maxNbThreadsMargin = 1.2; // TODO properties
+			this.maxExecutionTime = 5000; // TODO properties
 			this.optimizer = new Optimizer(this);
 		}
 
@@ -100,6 +101,22 @@ public class OptimizedTaskPool {
 		 */
 		public Optimizer getOptimizer() {
 			return optimizer;
+		}
+
+		/**
+		 * @return the acceptable {@link #maxNbThreads} max nb-of-threads margin-coefficient before {@link RunTimeException} if {@link #maxExecutionTime}
+		 *         exceeded.
+		 */
+		public double getMaxNbThreadsMargin() {
+			return maxNbThreadsMargin;
+		}
+
+		/**
+		 * @return the {@link ForkJoinPool}s' acceptable max last-execution-time before {@link RunTimeException} if acceptable {@link #maxNbThreads}
+		 *         exceeded.
+		 */
+		public int getMaxExecutionTime() {
+			return maxExecutionTime;
 		}
 	}
 
@@ -175,7 +192,7 @@ public class OptimizedTaskPool {
 		 * 
 		 * @param askedSize Ideal pool-size if possible
 		 * @return The acceptable pool-size
-		 * @throws RuntimeException if {@link #MAX_NB_THEADS_MARGIN} * {@link #maxNbThreads} and {@link #MAX_EXECUTION_TIME} exceeded
+		 * @throws RuntimeException if {@link #maxNbThreadsMargin} * {@link #maxNbThreads} and {@link #maxExecutionTime} exceeded
 		 */
 		private int calculateSize(int askedSize) {
 			if (thresholdsExcedded())
@@ -223,12 +240,13 @@ public class OptimizedTaskPool {
 		 * @return true if max acceptable nb-of-threads and max execution-time exceeded
 		 */
 		private boolean thresholdsExcedded() {
-			return currentNbThreads.get() > Config.MAX_NB_THEADS_MARGIN * config.maxNbThreads && lastExecutionTime > Config.MAX_EXECUTION_TIME;
+			return currentNbThreads.get() > config.maxNbThreadsMargin && lastExecutionTime > config.maxExecutionTime
+					|| currentNbThreads.get() > config.maxNbThreadsMargin * config.maxNbThreads;
 		}
 
 		/**
 		 * Drastically lowers default parallelism level proportionally to ratio between {@link #maxNbThreads} and {@link #currentNbThreads} in case of
-		 * exceeding {@link #MAX_NB_THEADS_MARGIN} * {@link #maxNbThreads}.
+		 * exceeding {@link #maxNbThreadsMargin} * {@link #maxNbThreads}.
 		 */
 		private synchronized void emergencyLowerParallelism() {
 			System.out.println(String.format("emergencyLowerParallelism %s", currentNbThreads.get()));

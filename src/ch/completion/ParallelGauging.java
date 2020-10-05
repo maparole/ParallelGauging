@@ -18,10 +18,13 @@ public class ParallelGauging {
 
 	static final double SERVICE_EXECUTION_TIME_VARIATION_FOR_CURRENT_LOAD_DIVIDER = 2;
 
-	static OptimizedTaskPool.Config firstLevelConfig = new OptimizedTaskPool.Config(1000, "FIRST");
-	static OptimizedTaskPool.Config secondLevelConfig = new OptimizedTaskPool.Config(1000, "SECOND");
-
 	static Service service = new Service();
+
+	static final int FIRST_MAX_NB_THEADS = 1000; // TODO properties
+	static final int SECOND_MAX_NB_THEADS = 1000; // TODO properties
+
+	static OptimizedTaskPool.Config firstLevelConfig = new OptimizedTaskPool.Config(FIRST_MAX_NB_THEADS, "FIRST");
+	static OptimizedTaskPool.Config secondLevelConfig = new OptimizedTaskPool.Config(SECOND_MAX_NB_THEADS, "SECOND");
 
 	public static void main(String[] args) {
 
@@ -39,9 +42,9 @@ public class ParallelGauging {
 
 		System.out.println(String.format("ForkJoin pools optimisation tempo: %s calls", OptimizedTaskPool.Config.OPTIMISATION_TEMPO * 3));
 		System.out.println(String.format("ForkJoin pools acceptable max nb-of-threads margin-coefficient before RunTimeException: %s",
-				OptimizedTaskPool.Config.MAX_NB_THEADS_MARGIN));
+				firstLevelConfig.getMaxNbThreadsMargin()));
 		System.out.println(String.format("ForkJoin pools acceptable max last-execution-time before RunTimeException: %sms",
-				OptimizedTaskPool.Config.MAX_EXECUTION_TIME));
+				firstLevelConfig.getMaxExecutionTime()));
 		System.out.println();
 
 		System.out.println(String.format("%s level pool max nb-of-threads: %s", secondLevelConfig.getTaskName(), secondLevelConfig.getMaxNbThreads()));
