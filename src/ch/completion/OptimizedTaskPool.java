@@ -195,13 +195,15 @@ public class OptimizedTaskPool {
 		 * @throws RuntimeException if {@link #maxNbThreadsMargin} * {@link #maxNbThreads} and {@link #maxExecutionTime} exceeded
 		 */
 		private int calculateSize(int askedSize) {
+
+			long currentNb = currentNbThreads.get();
+
 			if (thresholdsExcedded())
-				throw new RuntimeException(String.format("%s: too many requests or/and maximum execution time exceeded", config.taskName));
+				throw new RuntimeException(String.format("%s: too many requests or/and maximum execution time exceeded: %s/%s", config.taskName,
+						currentNb, config.getMaxNbThreads()));
 
 			// update the max encountered asked-size so far if new bigger
 			maxAskedParallelism = Math.max(askedSize, maxAskedParallelism);
-
-			long currentNb = currentNbThreads.get();
 
 			int size;
 
