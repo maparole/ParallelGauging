@@ -192,7 +192,7 @@ public class OptimizedTaskPool {
 		 * 
 		 * @param askedSize Ideal pool-size if possible
 		 * @return The acceptable pool-size
-		 * @throws RuntimeException if {@link #maxNbThreadsMargin} * {@link #maxNbThreads} and {@link #maxExecutionTime} exceeded
+		 * @throws RuntimeException if {@link #maxNbThreadsMargin} * {@link #maxNbThreads} exceeded OR {@link #maxNbThreads} and {@link #maxExecutionTime} exceeded
 		 */
 		private int calculateSize(int askedSize) {
 
@@ -248,7 +248,7 @@ public class OptimizedTaskPool {
 
 		/**
 		 * Drastically lowers default parallelism level proportionally to ratio between {@link #maxNbThreads} and {@link #currentNbThreads} in case of
-		 * exceeding {@link #maxNbThreadsMargin} * {@link #maxNbThreads}.
+		 * exceeding {@link #maxNbThreads}.
 		 */
 		private synchronized void emergencyLowerParallelism() {
 			System.out.println(String.format("emergencyLowerParallelism %s", currentNbThreads.get()));
