@@ -60,24 +60,6 @@ public class ParallelGauging {
 		}
 	}
 
-	static List<Integer> secondLevel() {
-
-		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random() * 4) * 3)).boxed()
-				.collect(Collectors.toList());
-
-		///
-		OptimizedTaskPool pool = new OptimizedTaskPool(testList.size(), secondLevelConfig);
-
-		List<Integer> result = pool.submit(() -> testList.parallelStream().map(item -> {
-			return service.doThis(itemy -> itemy * 10, item);
-		}).collect(Collectors.toList())).join();
-
-		///
-		pool.shutdown();
-
-		return result;
-	}
-
 	static List<Integer> firstLevels() {
 
 		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random() * 4) * 3)).boxed()
@@ -88,6 +70,24 @@ public class ParallelGauging {
 
 		List<Integer> result = pool.submit(() -> testList.parallelStream().map(item -> {
 			return secondLevel().stream().reduce(Integer::sum).get();
+		}).collect(Collectors.toList())).join();
+
+		///
+		pool.shutdown();
+
+		return result;
+	}
+
+	static List<Integer> secondLevel() {
+
+		List<Integer> testList = IntStream.range(0, (int) (Math.exp(Math.random() * Math.random() * Math.random() * 4) * 3)).boxed()
+				.collect(Collectors.toList());
+
+		///
+		OptimizedTaskPool pool = new OptimizedTaskPool(testList.size(), secondLevelConfig);
+
+		List<Integer> result = pool.submit(() -> testList.parallelStream().map(item -> {
+			return service.doThis(itemy -> itemy * 10, item);
 		}).collect(Collectors.toList())).join();
 
 		///

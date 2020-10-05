@@ -79,7 +79,6 @@ public class OptimizedTaskPool {
 			this.maxNbThreads = maxNbThreads;
 			this.taskName = taskName;
 			this.optimizer = new Optimizer(this);
-			this.optimizer.resetMap();
 		}
 
 		/**
@@ -157,93 +156,18 @@ public class OptimizedTaskPool {
 				throw new IllegalArgumentException(
 						String.format("%s OptimizedTaskPool.Optimizer.parallelism's default value MUST BE 1", config.getTaskName()));
 			}
+			reinitialize();
 		}
 
 		/**
-		 * Reset the optimization Map.
+		 * Re-initilize optimization for next test options. Its reset the optimization Map.
 		 */
-		private void resetMap() {
+		private void reinitialize() {
 			parallelismToExecutionTimes.clear();
 			parallelismToExecutionTimes.put(parallelism + Config.OPTIMIZATION_STEP, new ArrayList<>());
 			parallelismToExecutionTimes.put(parallelism, new ArrayList<>());
 			if (parallelism > 1)
 				parallelismToExecutionTimes.put(parallelism - Config.OPTIMIZATION_STEP, new ArrayList<>());
-		}
-
-		/**
-		 * 1. Records last execution time<br>
-		 * 2. Selects other default parallelism level option if enough data recorded for current<br>
-		 * 3. Does optimization to calculate next default parallelism level if all current options tested.<br>
-		 * 
-		 * @param time Execution to record for optimization
-		 */
-		private synchronized void processMap(Long time) {
-			List<Long> list = parallelismToExecutionTimes.get(parallelism);
-			if (list == null)
-				return;
-			list.add(time);
-			if (list.size() >= OptimizedTaskPool.Config.OPTIMISATION_TEMPO) {
-				Optional<Integer> optionalUntestedParallelism = parallelismToExecutionTimes.keySet().stream()
-						.filter(key -> parallelismToExecutionTimes.get(key).size() == 0).findFirst();
-				if (optionalUntestedParallelism.isPresent()) {
-					parallelism = optionalUntestedParallelism.get();
-				} else {
-					optimize();
-				}
-			}
-		}
-
-		/**
-		 * Executes optimization:<br>
-		 * It finds the best parallelism level among the tested options according to their average execution times.
-		 */
-		private void optimize() {
-			// calculate average execution time for each tested parallelism level
-			Map<Integer, Double> parallelismToAverageExecutionTime = parallelismToExecutionTimes.entrySet().stream()
-					.collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().stream().mapToDouble(a -> a).average().getAsDouble()));
-
-			// log results
-			parallelismToAverageExecutionTime.entrySet().forEach(entry -> {
-				System.out.println(String.format("%s -> %s", entry.getKey(), entry.getValue()));
-			});
-
-			// default parallelism level select at last optimization and used as base for this new one
-			int previousParallelism = (int) parallelismToExecutionTimes.keySet().stream().mapToDouble(q -> q).average().getAsDouble();
-
-			// best option for next optimization window
-			Entry<Integer, Double> bestParallelismEntry = parallelismToAverageExecutionTime.entrySet().stream()
-					.min((d1, d2) -> Double.compare(d1.getValue(), d2.getValue())).get();
-
-			int bestParallelism = bestParallelismEntry.getKey();
-
-			// scale proportionally to difference in average execution time to opportunistic maximization
-			bestParallelism = previousParallelism
-					+ (bestParallelism - previousParallelism) * Math.max(1, (int) ((double) parallelismToAverageExecutionTime.get(previousParallelism)
-							/ parallelismToAverageExecutionTime.get(bestParallelism)));
-
-			// don't unnecessarily exceed max encountered asked-size so far
-			bestParallelism = Math.min(maxAskedParallelism, bestParallelism);
-			// never 0 or less
-			bestParallelism = Math.max(1, bestParallelism);
-			// replace default parallelism level with new one
-			parallelism = bestParallelism;
-
-			// reset optimization context
-			resetMap();
-
-			// log new default parallelism level
-			System.out.println(
-					String.format("%s\t(//)%s\t(nb)%s\t(ms)%s\n", config.taskName, parallelism, currentNbThreads, bestParallelismEntry.getValue()));
-		}
-
-		/**
-		 * Drastically lowers default parallelism level proportionally to ratio between {@link #maxNbThreads} and {@link #currentNbThreads} in case of
-		 * exceeding {@link #MAX_NB_THEADS_MARGIN} * {@link #maxNbThreads}.
-		 */
-		private synchronized void emergencyLowerParallelism() {
-			System.out.println(String.format("emergencyLowerParallelism %s", currentNbThreads.get()));
-			parallelism = Math.max(1, (int) (parallelism * config.maxNbThreads / currentNbThreads.get()));
-			resetMap();
 		}
 
 		/**
@@ -303,6 +227,16 @@ public class OptimizedTaskPool {
 		}
 
 		/**
+		 * Drastically lowers default parallelism level proportionally to ratio between {@link #maxNbThreads} and {@link #currentNbThreads} in case of
+		 * exceeding {@link #MAX_NB_THEADS_MARGIN} * {@link #maxNbThreads}.
+		 */
+		private synchronized void emergencyLowerParallelism() {
+			System.out.println(String.format("emergencyLowerParallelism %s", currentNbThreads.get()));
+			parallelism = Math.max(1, (int) (parallelism * config.maxNbThreads / currentNbThreads.get()));
+			reinitialize();
+		}
+
+		/**
 		 * Processes the given metrics for optimization and updates current nb-of-threads on task.
 		 * 
 		 * @param time The execution time
@@ -311,7 +245,73 @@ public class OptimizedTaskPool {
 		private void processMetrics(long time, long poolSize) {
 			lastExecutionTime = time;
 			currentNbThreads.addAndGet(-poolSize);
-			processMap(time);
+			updateMapAndMaybeOptimizeNow(time);
+		}
+
+		/**
+		 * 1. Records last execution time<br>
+		 * 2. Selects other default parallelism level option if enough data recorded for current<br>
+		 * 3. Does optimization to calculate next default parallelism level if all current options tested.<br>
+		 * 
+		 * @param time Execution to record for optimization
+		 */
+		private synchronized void updateMapAndMaybeOptimizeNow(Long time) {
+			List<Long> list = parallelismToExecutionTimes.get(parallelism);
+			if (list == null)
+				return;
+			list.add(time);
+			if (list.size() >= OptimizedTaskPool.Config.OPTIMISATION_TEMPO) {
+				Optional<Integer> optionalUntestedParallelism = parallelismToExecutionTimes.keySet().stream()
+						.filter(key -> parallelismToExecutionTimes.get(key).size() == 0).findFirst();
+				if (optionalUntestedParallelism.isPresent()) {
+					parallelism = optionalUntestedParallelism.get();
+				} else {
+					optimize();
+				}
+			}
+		}
+
+		/**
+		 * Executes optimization:<br>
+		 * It finds the best parallelism level among the tested options according to their average execution times.
+		 */
+		private void optimize() {
+			// calculate average execution time for each tested parallelism level
+			Map<Integer, Double> parallelismToAverageExecutionTime = parallelismToExecutionTimes.entrySet().stream()
+					.collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().stream().mapToDouble(a -> a).average().getAsDouble()));
+
+			// log results
+			parallelismToAverageExecutionTime.entrySet().forEach(entry -> {
+				System.out.println(String.format("%s -> %s", entry.getKey(), entry.getValue()));
+			});
+
+			// default parallelism level select at last optimization and used as base for this new one
+			int previousParallelism = (int) parallelismToExecutionTimes.keySet().stream().mapToDouble(q -> q).average().getAsDouble();
+
+			// best option for next optimization window
+			Entry<Integer, Double> bestParallelismEntry = parallelismToAverageExecutionTime.entrySet().stream()
+					.min((d1, d2) -> Double.compare(d1.getValue(), d2.getValue())).get();
+
+			int bestParallelism = bestParallelismEntry.getKey();
+
+			// scale proportionally to difference in average execution time to opportunistic maximization
+			bestParallelism = previousParallelism
+					+ (bestParallelism - previousParallelism) * Math.max(1, (int) ((double) parallelismToAverageExecutionTime.get(previousParallelism)
+							/ parallelismToAverageExecutionTime.get(bestParallelism)));
+
+			// don't unnecessarily exceed max encountered asked-size so far
+			bestParallelism = Math.min(maxAskedParallelism, bestParallelism);
+			// never 0 or less
+			bestParallelism = Math.max(1, bestParallelism);
+			// replace default parallelism level with new one
+			parallelism = bestParallelism;
+
+			// reset optimization context
+			reinitialize();
+
+			// log new default parallelism level
+			System.out.println(
+					String.format("%s\t(//)%s\t(nb)%s\t(ms)%s\n", config.taskName, parallelism, currentNbThreads, bestParallelismEntry.getValue()));
 		}
 	}
 
