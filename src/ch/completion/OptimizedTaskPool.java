@@ -121,7 +121,7 @@ public class OptimizedTaskPool {
 		 * The current default parallelism level.<br>
 		 * <br>
 		 * DO NOT CHANGE DEFAULT VALUE OF 1 (ONE)!! <br>
-		 * Otherwise risks of {@link OutOfMemoryError} if {@link OptimizedTaskPool#shutdown} not properly called.
+		 * Otherwise risks of {@link OutOfMemoryError} if {@link OptimizedTaskPool#shutdown} not properly called to optimize.
 		 */
 		private int parallelism = 1;
 
